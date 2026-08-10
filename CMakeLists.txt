@@ -10,6 +10,7 @@ endif()
 
 include(FetchContent)
 
+# ImGui
 FetchContent_Declare(
     imgui
     GIT_REPOSITORY https://github.com/ocornut/imgui.git
@@ -17,6 +18,7 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(imgui)
 
+# MinHook
 FetchContent_Declare(
     minhook
     GIT_REPOSITORY https://github.com/TsudaKageyu/minhook.git
@@ -24,6 +26,7 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(minhook)
 
+# Librería estática para ImGui
 add_library(imgui STATIC
     ${imgui_SOURCE_DIR}/imgui.cpp
     ${imgui_SOURCE_DIR}/imgui_draw.cpp
@@ -40,6 +43,7 @@ target_include_directories(imgui PUBLIC
     ${imgui_SOURCE_DIR}/backends
 )
 
+# DLL de YiyoOverlay
 add_library(YiyoOverlay SHARED
     src/dllmain.cpp
     src/overlay.cpp
@@ -50,9 +54,10 @@ add_library(YiyoOverlay SHARED
     src/config.cpp
 )
 
+# Se enlaza el target oficial de MinHook ('MinHook') en lugar de la cadena simple
 target_link_libraries(YiyoOverlay PRIVATE
     imgui
-    minhook
+    MinHook
     d3d11.lib
     d3d12.lib
     dxgi.lib
@@ -61,10 +66,11 @@ target_link_libraries(YiyoOverlay PRIVATE
     powrprof.lib
 )
 
-# Se agrega la ruta de cabeceras de MinHook para que encuentre MinHook.h
 target_include_directories(YiyoOverlay PRIVATE 
     src
     ${minhook_SOURCE_DIR}/include
+    ${imgui_SOURCE_DIR}
+    ${imgui_SOURCE_DIR}/backends
 )
 
 set_target_properties(YiyoOverlay PROPERTIES
