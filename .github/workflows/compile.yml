@@ -12,18 +12,15 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    - name: Configurar CMake
-      uses: lukka/get-cmake@latest
+    - name: Configurar MSVC
+      uses: ilammy/msvc-dev-cmd@v1
 
-    - name: Compilar DLL
+    - name: Compilar DLL con MSVC
       run: |
-        mkdir build
-        cd build
-        cmake .. -A x64
-        cmake --build . --config Release
+        cl.exe /O2 /LD /std:c++17 /EHsc dllmain.cpp hook_dx11.cpp hook_dx12.cpp metrics.cpp /link /OUT:YiyoOverlay.dll d3d11.lib d3d12.lib dxgi.lib pdh.lib powrprof.lib user32.lib
 
     - name: Subir DLL Compilada
       uses: actions/upload-artifact@v4
       with:
         name: YiyoOverlay-DLL
-        path: build/Release/YiyoOverlay.dll
+        path: YiyoOverlay.dll
