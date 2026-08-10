@@ -10,7 +10,7 @@ jobs:
     runs-on: windows-latest
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v4.2.2
 
     - name: Configurar CMake
       uses: lukka/get-cmake@latest
@@ -23,7 +23,9 @@ jobs:
         cmake --build . --config Release
 
     - name: Subir DLL Compilada
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v4.4.3
       with:
         name: YiyoOverlay-DLL
-        path: build/bin/Release/YiyoOverlay.dll
+        path: |
+          build/bin/Release/YiyoOverlay.dll
+          build/Release/YiyoOverlay.dll
