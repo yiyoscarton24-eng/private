@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(YiyoOverlay LANGUAGES CXX)
+project(YiyoOverlay LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -10,7 +10,7 @@ endif()
 
 include(FetchContent)
 
-# ImGui
+# 1. Fetch ImGui
 FetchContent_Declare(
     imgui
     GIT_REPOSITORY https://github.com/ocornut/imgui.git
@@ -18,7 +18,7 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(imgui)
 
-# MinHook
+# 2. Fetch MinHook
 FetchContent_Declare(
     minhook
     GIT_REPOSITORY https://github.com/TsudaKageyu/minhook.git
@@ -26,7 +26,7 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(minhook)
 
-# Librería estática para ImGui
+# Compilar ImGui
 add_library(imgui STATIC
     ${imgui_SOURCE_DIR}/imgui.cpp
     ${imgui_SOURCE_DIR}/imgui_draw.cpp
@@ -43,7 +43,20 @@ target_include_directories(imgui PUBLIC
     ${imgui_SOURCE_DIR}/backends
 )
 
-# DLL de YiyoOverlay
+# Compilar MinHook desde las fuentes
+add_library(minhook_static STATIC
+    ${minhook_SOURCE_DIR}/src/buffer.c
+    ${minhook_SOURCE_DIR}/src/hook.c
+    ${minhook_SOURCE_DIR}/src/trampoline.c
+    ${minhook_SOURCE_DIR}/src/hde/hde32.c
+    ${minhook_SOURCE_DIR}/src/hde/hde64.c
+)
+
+target_include_directories(minhook_static PUBLIC
+    ${minhook_SOURCE_DIR}/include
+)
+
+# Compilar YiyoOverlay DLL
 add_library(YiyoOverlay SHARED
     src/dllmain.cpp
     src/overlay.cpp
@@ -54,16 +67,17 @@ add_library(YiyoOverlay SHARED
     src/config.cpp
 )
 
-# Se enlaza el target oficial de MinHook ('MinHook') en lugar de la cadena simple
 target_link_libraries(YiyoOverlay PRIVATE
     imgui
-    MinHook
+    minhook_static
     d3d11.lib
     d3d12.lib
     dxgi.lib
     dxguid.lib
     pdh.lib
     powrprof.lib
+    user32.lib
+    gdi32.lib
 )
 
 target_include_directories(YiyoOverlay PRIVATE 
