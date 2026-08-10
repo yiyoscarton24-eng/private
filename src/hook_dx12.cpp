@@ -165,7 +165,7 @@ static bool CreateBackBuffers(IDXGISwapChain3* swapChain, UINT bufferCount)
             LOG_ERROR("DX12 GetBuffer(%u) fallo: 0x%08X", i, hr);
             return false;
         }
-        g_device->CreateRenderTargetView(g_backBuffers[i], nullptr, &handle);
+        g_device->CreateRenderTargetView(g_backBuffers[i], nullptr, handle);
         g_rtvHandles[i] = handle;
     }
     return true;
