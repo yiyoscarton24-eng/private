@@ -34,6 +34,7 @@ add_library(imgui STATIC
     ${imgui_SOURCE_DIR}/backends/imgui_impl_dx11.cpp
     ${imgui_SOURCE_DIR}/backends/imgui_impl_dx12.cpp
 )
+
 target_include_directories(imgui PUBLIC
     ${imgui_SOURCE_DIR}
     ${imgui_SOURCE_DIR}/backends
@@ -60,7 +61,11 @@ target_link_libraries(YiyoOverlay PRIVATE
     powrprof.lib
 )
 
-target_include_directories(YiyoOverlay PRIVATE src)
+# Se agrega la ruta de cabeceras de MinHook para que encuentre MinHook.h
+target_include_directories(YiyoOverlay PRIVATE 
+    src
+    ${minhook_SOURCE_DIR}/include
+)
 
 set_target_properties(YiyoOverlay PROPERTIES
     OUTPUT_NAME "YiyoOverlay"
