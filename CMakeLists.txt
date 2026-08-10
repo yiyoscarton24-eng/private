@@ -2,8 +2,15 @@ cmake_minimum_required(VERSION 3.21)
 
 project(YiyoOverlay C CXX)
 
-# Fuerza la compilación estática del runtime para evitar faltas de DLLs
-set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+# Configuración del estándar C++17
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+# Fuerza la compilación estática del runtime MSVC (/MT) para evitar errores de DLLs faltantes
+if(MSVC)
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    add_compile_definitions(NOMINMAX WIN32_LEAN_AND_MEAN)
+endif()
 
 # Compilar ImGui
 add_library(imgui STATIC
@@ -71,8 +78,9 @@ set_target_properties(YiyoOverlay PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
 )
 
+# Copiar config.ini junto a la DLL al finalizar la compilación
 add_custom_command(TARGET YiyoOverlay POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
         ${CMAKE_SOURCE_DIR}/config.ini
         $<TARGET_FILE_DIR:YiyoOverlay>/config.ini
 )
