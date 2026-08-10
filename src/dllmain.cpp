@@ -1,4 +1,24 @@
 #include <windows.h>
+
+// Directivas de enlace proxy para version.dll (Redirección limpia a System32)
+#pragma comment(linker, "/export:GetFileVersionInfoA=version.GetFileVersionInfoA")
+#pragma comment(linker, "/export:GetFileVersionInfoByHandle=version.GetFileVersionInfoByHandle")
+#pragma comment(linker, "/export:GetFileVersionInfoExA=version.GetFileVersionInfoExA")
+#pragma comment(linker, "/export:GetFileVersionInfoExW=version.GetFileVersionInfoExW")
+#pragma comment(linker, "/export:GetFileVersionInfoSizeA=version.GetFileVersionInfoSizeA")
+#pragma comment(linker, "/export:GetFileVersionInfoSizeExA=version.GetFileVersionInfoSizeExA")
+#pragma comment(linker, "/export:GetFileVersionInfoSizeExW=version.GetFileVersionInfoSizeExW")
+#pragma comment(linker, "/export:GetFileVersionInfoSizeW=version.GetFileVersionInfoSizeW")
+#pragma comment(linker, "/export:GetFileVersionInfoW=version.GetFileVersionInfoW")
+#pragma comment(linker, "/export:VerFindFileA=version.VerFindFileA")
+#pragma comment(linker, "/export:VerFindFileW=version.VerFindFileW")
+#pragma comment(linker, "/export:VerInstallFileA=version.VerInstallFileA")
+#pragma comment(linker, "/export:VerInstallFileW=version.VerInstallFileW")
+#pragma comment(linker, "/export:VerLanguageNameA=version.VerLanguageNameA")
+#pragma comment(linker, "/export:VerLanguageNameW=version.VerLanguageNameW")
+#pragma comment(linker, "/export:VerQueryValueA=version.VerQueryValueA")
+#pragma comment(linker, "/export:VerQueryValueW=version.VerQueryValueW")
+
 #include <MinHook.h>
 #include <atomic>
 #include "hook_dx11.h"
