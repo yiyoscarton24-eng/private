@@ -1,8 +1,17 @@
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+
+#include <windows.h>
+#include <winternl.h>
+
 #include "metrics.h"
 #include "overlay.h"
 #include "logger.h"
 
-#include <windows.h>
 #include <pdh.h>
 #include <pdhmsg.h>
 #include <dxgi1_4.h>
@@ -16,9 +25,7 @@
 #pragma comment(lib, "pdh.lib")
 #pragma comment(lib, "powrprof.lib")
 
-// Estructura no expuesta en headers publicos de Windows SDK para
-// ProcessorInformation; layout estable desde XP, usado ampliamente por
-// herramientas de monitorizacion (misma que usa Process Explorer / HWiNFO).
+// Estructura no expuesta en headers publicos de Windows SDK para ProcessorInformation
 typedef struct _PROCESSOR_POWER_INFORMATION {
     ULONG Number;
     ULONG MaxMhz;
@@ -31,9 +38,6 @@ typedef struct _PROCESSOR_POWER_INFORMATION {
 static std::atomic<bool> g_metricsRunning{ false };
 static std::thread g_metricsThread;
 
-// Senal de apagado + evento sobre el que se espera en vez de dormir un
-// intervalo fijo: Metrics_StopThread() lo activa para despertar el hilo
-// de inmediato en lugar de esperar hasta 500ms a que expire el sleep.
 static std::atomic<bool> g_shuttingDown{ false };
 static HANDLE g_wakeEvent = nullptr;
 
@@ -71,9 +75,6 @@ struct CpuCounter {
         return (float)val.doubleValue;
     }
 
-    // Cierra el handle de consulta PDH. Sin esto, cada PdhOpenQueryW()
-    // (uno por Metrics_StartThread()) fugaba el handle correspondiente
-    // durante toda la vida del proceso.
     void Shutdown()
     {
         if (query)
@@ -86,9 +87,7 @@ struct CpuCounter {
     }
 };
 
-// CPU MHz dinamico real: CallNtPowerInformation devuelve la frecuencia
-// ACTUAL de cada nucleo logico (no el clock base fijo del registro).
-// Se promedia entre nucleos para un numero representativo en el overlay.
+// Frecuencia actual de CPU
 static float ReadCpuCurrentMHz()
 {
     SYSTEM_INFO sysInfo{};
@@ -115,10 +114,7 @@ static float ReadCpuCurrentMHz()
 }
 
 // ---------------------------------------------------------------------
-// GPU %  -- SOLO motor 3D (engtype_3D). Sumar todas las instancias
-// (Copy, VideoDecode, Compute, etc.) sobreestima el uso real de
-// renderizado; engtype_3D es el equivalente exacto al "GPU" que muestra
-// el Administrador de Tareas en la pestana de Rendimiento.
+// GPU % (Motor 3D)
 // ---------------------------------------------------------------------
 struct GpuCounter {
     PDH_HQUERY query = nullptr;
@@ -141,7 +137,7 @@ struct GpuCounter {
 
         std::vector<wchar_t> pathList(pathListSize);
         st = PdhExpandWildCardPathW(nullptr, L"\\GPU Engine(*engtype_3D)\\Utilization Percentage",
-                                     pathList.data(), &pathListSize, 0);
+                                    pathList.data(), &pathListSize, 0);
         if (st != ERROR_SUCCESS)
         {
             LOG_ERROR("PdhExpandWildCardPathW (GPU 3D) fallo: 0x%08X", st);
@@ -183,16 +179,11 @@ struct GpuCounter {
             if (PdhGetFormattedCounterValue(c, PDH_FMT_DOUBLE, nullptr, &val) == ERROR_SUCCESS)
                 total += val.doubleValue;
         }
-        // Varias instancias 3D (una por proceso que usa el motor) pueden
-        // sumar mas de 100% en momentos de contencion; se limita al rango
-        // valido para el overlay.
+
         if (total > 100.0) total = 100.0;
         return (float)total;
     }
 
-    // Cierra el handle de consulta PDH (libera tambien todos los
-    // contadores engtype_3D agregados a esa query). Mismo problema que
-    // CpuCounter::Shutdown(): sin esto el handle quedaba fugado.
     void Shutdown()
     {
         if (query)
@@ -206,13 +197,7 @@ struct GpuCounter {
 };
 
 // ---------------------------------------------------------------------
-// VRAM -- factory y adapter se resuelven UNA sola vez en Init() y se
-// reutilizan en cada Sample(). Antes, SampleVram() llamaba a
-// CreateDXGIFactory1 + EnumAdapters1 + QueryInterface(IDXGIAdapter3) en
-// cada muestreo (cada 500ms), es decir, para siempre mientras el overlay
-// estuviera activo: coste de CPU innecesario y churn de referencias COM
-// repetido sin ninguna necesidad, ya que el adaptador no cambia en
-// caliente durante la vida normal del proceso.
+// VRAM
 // ---------------------------------------------------------------------
 struct VramCounter {
     IDXGIFactory4* factory = nullptr;
@@ -232,7 +217,7 @@ struct VramCounter {
         adapter1->Release();
         if (FAILED(hr))
         {
-            LOG_ERROR("QueryInterface IDXGIAdapter3 fallo: 0x%08X (GPU sin soporte DXGI 1.4?)", hr);
+            LOG_ERROR("QueryInterface IDXGIAdapter3 fallo: 0x%08X", hr);
             return;
         }
 
@@ -301,13 +286,6 @@ static void MetricsLoop(int intervalMs)
             g_overlay.vramTotalGB = vBudget;
         }
 
-        // Antes: std::this_thread::sleep_for(...) monolitico, que
-        // bloqueaba el hilo hasta intervalMs completos sin importar que
-        // g_shuttingDown se activara a mitad de la espera, retrasando el
-        // apagado (Metrics_StopThread hace join()) hasta 500ms. Ahora se
-        // espera sobre un evento que StopThread() señala para despertar
-        // de inmediato; si nadie lo señala, el timeout actua igual que
-        // el sleep_for original.
         WaitForSingleObject(g_wakeEvent, (DWORD)intervalMs);
     }
 
@@ -322,7 +300,7 @@ void Metrics_StartThread(int intervalMs)
 
     g_shuttingDown = false;
     if (!g_wakeEvent)
-        g_wakeEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr); // auto-reset
+        g_wakeEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
 
     g_metricsRunning = true;
     g_metricsThread = std::thread(MetricsLoop, intervalMs);
@@ -335,10 +313,18 @@ void Metrics_StopThread()
 
     g_shuttingDown = true;
     if (g_wakeEvent)
+    {
         SetEvent(g_wakeEvent);
+    }
 
     if (g_metricsThread.joinable())
         g_metricsThread.join();
+
+    if (g_wakeEvent)
+    {
+        CloseHandle(g_wakeEvent);
+        g_wakeEvent = nullptr;
+    }
 
     g_metricsRunning = false;
     LOG_INFO("Hilo de metricas detenido");
