@@ -11,16 +11,16 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4.2.2
+      with:
+        submodules: recursive
 
     - name: Configurar CMake
       uses: lukka/get-cmake@latest
 
-    - name: Compilar DLL
+    - name: Generar y Compilar DLL (x64)
       run: |
-        mkdir build
-        cd build
-        cmake .. -A x64
-        cmake --build . --config Release
+        cmake -B build -A x64 -DCMAKE_BUILD_TYPE=Release
+        cmake --build build --config Release
 
     - name: Subir DLL Compilada
       uses: actions/upload-artifact@v4.4.3
@@ -29,3 +29,4 @@ jobs:
         path: |
           build/bin/Release/YiyoOverlay.dll
           build/Release/YiyoOverlay.dll
+          build/bin/YiyoOverlay.dll
