@@ -6,22 +6,15 @@
 #endif
 
 #include <windows.h>
-
-// Asegurar la definicion de NTSTATUS independientemente del orden de cabeceras de MSVC
-#ifndef NTSTATUS
-typedef LONG NTSTATUS;
-#endif
-
-#include <winternl.h>
+#include <pdh.h>
+#include <pdhmsg.h>
+#include <dxgi1_4.h>
+#include <powrprof.h>
 
 #include "metrics.h"
 #include "overlay.h"
 #include "logger.h"
 
-#include <pdh.h>
-#include <pdhmsg.h>
-#include <dxgi1_4.h>
-#include <powrprof.h>
 #include <thread>
 #include <atomic>
 #include <vector>
@@ -31,7 +24,7 @@ typedef LONG NTSTATUS;
 #pragma comment(lib, "pdh.lib")
 #pragma comment(lib, "powrprof.lib")
 
-// Estructura no expuesta en headers publicos de Windows SDK para ProcessorInformation
+// Estructura para ProcessorInformation de PowrProf
 typedef struct _PROCESSOR_POWER_INFORMATION {
     ULONG Number;
     ULONG MaxMhz;
@@ -102,7 +95,9 @@ static float ReadCpuCurrentMHz()
     if (numCores == 0) numCores = 1;
 
     std::vector<PROCESSOR_POWER_INFORMATION> info(numCores);
-    NTSTATUS status = CallNtPowerInformation(
+    
+    // Usamos LONG directamente (que es el tipo real retornado por CallNtPowerInformation)
+    LONG status = CallNtPowerInformation(
         ProcessorInformation, nullptr, 0,
         info.data(), (ULONG)(sizeof(PROCESSOR_POWER_INFORMATION) * numCores));
 
