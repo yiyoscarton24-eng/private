@@ -1,30 +1,9 @@
 cmake_minimum_required(VERSION 3.21)
-project(YiyoOverlay LANGUAGES C CXX)
 
-set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
+project(YiyoOverlay C CXX)
 
-if(NOT WIN32)
-    message(FATAL_ERROR "YiyoOverlay solo se compila para Windows (DX11/DX12).")
-endif()
-
-include(FetchContent)
-
-# 1. Fetch ImGui
-FetchContent_Declare(
-    imgui
-    GIT_REPOSITORY https://github.com/ocornut/imgui.git
-    GIT_TAG        v1.90.9
-)
-FetchContent_MakeAvailable(imgui)
-
-# 2. Fetch MinHook
-FetchContent_Declare(
-    minhook
-    GIT_REPOSITORY https://github.com/TsudaKageyu/minhook.git
-    GIT_TAG        v1.3.3
-)
-FetchContent_MakeAvailable(minhook)
+# Fuerza la compilación estática del runtime para evitar faltas de DLLs
+set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
 # Compilar ImGui
 add_library(imgui STATIC
