@@ -2,12 +2,11 @@
 cmake_minimum_required(VERSION 3.21)
 
 # ============================================================
-# Proyecto
+# PROYECTO
 # ============================================================
 
 project(YiyoOverlay LANGUAGES C CXX)
 
-# Solo Windows
 if(NOT WIN32)
     message(FATAL_ERROR "YiyoOverlay solo soporta Windows.")
 endif()
@@ -28,9 +27,10 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 if(MSVC)
 
-    # Runtime:
-    # Debug   -> /MTd
-    # Release -> /MT
+    # Release = /MT
+    # Debug   = /MTd
+    #
+    # Esto evita depender del runtime DLL de Visual C++.
     set(
         CMAKE_MSVC_RUNTIME_LIBRARY
         "MultiThreaded$<$<CONFIG:Debug>:Debug>"
@@ -43,7 +43,6 @@ if(MSVC)
         _UNICODE
     )
 
-    # Evitar warnings innecesarios de Windows.
     add_compile_options(
         /W3
         /EHsc
@@ -53,7 +52,7 @@ endif()
 
 
 # ============================================================
-# Arquitectura
+# DETECTAR ARQUITECTURA
 # ============================================================
 
 if(CMAKE_SIZEOF_VOID_P EQUAL 8)
@@ -73,28 +72,32 @@ else()
 
 endif()
 
+message(STATUS "")
 message(STATUS "========================================")
-message(STATUS " YiyoOverlay")
-message(STATUS " Arquitectura: ${YIYO_ARCH}")
-message(STATUS " CMake: ${CMAKE_VERSION}")
+message(STATUS "        YiyoOverlay")
 message(STATUS "========================================")
+message(STATUS "Arquitectura : ${YIYO_ARCH}")
+message(STATUS "CMake        : ${CMAKE_VERSION}")
+message(STATUS "Compiler     : ${CMAKE_CXX_COMPILER_ID}")
+message(STATUS "========================================")
+message(STATUS "")
 
 
 # ============================================================
-# Dependencias
+# DEPENDENCIAS
 # ============================================================
 
 include(FetchContent)
 
 
 # ============================================================
-# ImGui
+# IMGUI
 # ============================================================
 
 FetchContent_Declare(
     imgui
     GIT_REPOSITORY https://github.com/ocornut/imgui.git
-    GIT_TAG        v1.90.8
+    GIT_TAG v1.90.8
 )
 
 FetchContent_MakeAvailable(imgui)
@@ -122,13 +125,13 @@ target_include_directories(imgui PUBLIC
 
 
 # ============================================================
-# MinHook
+# MINHOOK
 # ============================================================
 
 FetchContent_Declare(
     minhook
     GIT_REPOSITORY https://github.com/TsudaKageyu/minhook.git
-    GIT_TAG        v1.3.3
+    GIT_TAG v1.3.3
 )
 
 FetchContent_MakeAvailable(minhook)
@@ -152,7 +155,7 @@ target_include_directories(minhook_static PUBLIC
 
 
 # ============================================================
-# YiyoOverlay DLL
+# YIYOOVERLAY
 # ============================================================
 
 add_library(YiyoOverlay SHARED
@@ -160,87 +163,111 @@ add_library(YiyoOverlay SHARED
     src/dllmain.cpp
     src/overlay.cpp
     src/metrics.cpp
+
     src/hook_dx11.cpp
     src/hook_dx12.cpp
+
     src/logger.cpp
     src/config.cpp
 )
 
 
 # ============================================================
-# Include directories
+# INCLUDES
 # ============================================================
 
 target_include_directories(YiyoOverlay PRIVATE
 
     ${CMAKE_CURRENT_SOURCE_DIR}/src
 
-    ${minhook_SOURCE_DIR}/include
-
     ${imgui_SOURCE_DIR}
     ${imgui_SOURCE_DIR}/backends
+
+    ${minhook_SOURCE_DIR}/include
 )
 
 
 # ============================================================
-# Librerías Windows / DirectX
+# LIBRERÍAS
 # ============================================================
 
 target_link_libraries(YiyoOverlay PRIVATE
 
+    # ImGui
     imgui
+
+    # Hooking
     minhook_static
 
+    # DirectX
     d3d11
     d3d12
     dxgi
     dxguid
 
+    # Métricas
     pdh
     powrprof
 
+    # Windows
     user32
     gdi32
-
 )
 
 
 # ============================================================
-# Propiedades de la DLL
+# DEFINICIONES ESPECÍFICAS DEL OVERLAY
+# ============================================================
+
+target_compile_definitions(YiyoOverlay PRIVATE
+
+    YIYOOVERLAY_BUILD
+)
+
+
+# ============================================================
+# NOMBRE DE LA DLL
+# ============================================================
+#
+# IMPORTANTE:
+#
+# Esto genera:
+#
+#     YiyoOverlay.dll
+#
+# NO:
+#
+#     version.dll
+#
+#     overlay.dll
+#
+#     YiyoOverlay-debug.dll
+#
 # ============================================================
 
 set_target_properties(YiyoOverlay PROPERTIES
 
-    # Nombre REAL del archivo:
-    #
-    # YiyoOverlay.dll
-    #
     OUTPUT_NAME "YiyoOverlay"
 
-    # Evita que CMake añada nombres extra.
     DEBUG_POSTFIX ""
 
-    # DLL / LIB / PDB organizados por configuración.
-    RUNTIME_OUTPUT_DIRECTORY
-        "${CMAKE_BINARY_DIR}/bin"
-
-    LIBRARY_OUTPUT_DIRECTORY
-        "${CMAKE_BINARY_DIR}/lib"
-
-    ARCHIVE_OUTPUT_DIRECTORY
-        "${CMAKE_BINARY_DIR}/lib"
+    PREFIX ""
 
 )
 
 
 # ============================================================
-# Directorios específicos de configuración
+# SALIDA
+# ============================================================
 #
-# Visual Studio es multi-configuración.
-# Esto garantiza:
+# x64:
 #
-# build/bin/Debug/YiyoOverlay.dll
 # build/bin/Release/YiyoOverlay.dll
+#
+# x86:
+#
+# build/bin/Release/YiyoOverlay.dll
+#
 # ============================================================
 
 foreach(CONFIG Debug Release RelWithDebInfo MinSizeRel)
@@ -253,7 +280,7 @@ foreach(CONFIG Debug Release RelWithDebInfo MinSizeRel)
             "${CMAKE_BINARY_DIR}/bin/${CONFIG}"
 
         LIBRARY_OUTPUT_DIRECTORY_${CONFIG_UPPER}
-            "${CMAKE_BINARY_DIR}/lib/${CONFIG}"
+            "${CMAKE_BINARY_DIR}/bin/${CONFIG}"
 
         ARCHIVE_OUTPUT_DIRECTORY_${CONFIG_UPPER}
             "${CMAKE_BINARY_DIR}/lib/${CONFIG}"
@@ -264,7 +291,7 @@ endforeach()
 
 
 # ============================================================
-# Copiar config.ini
+# CONFIG.INI
 # ============================================================
 
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/config.ini")
@@ -273,13 +300,17 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/config.ini")
         TARGET YiyoOverlay
         POST_BUILD
 
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        COMMAND
+            ${CMAKE_COMMAND}
+            -E
+            copy_if_different
 
-        "${CMAKE_CURRENT_SOURCE_DIR}/config.ini"
+            "${CMAKE_CURRENT_SOURCE_DIR}/config.ini"
 
-        "$<TARGET_FILE_DIR:YiyoOverlay>/config.ini"
+            "$<TARGET_FILE_DIR:YiyoOverlay>/config.ini"
 
-        COMMENT "Copiando config.ini junto a YiyoOverlay.dll"
+        COMMENT
+            "Copiando config.ini junto a YiyoOverlay.dll"
     )
 
 else()
@@ -293,13 +324,21 @@ endif()
 
 
 # ============================================================
-# Información final
+# INFORMACIÓN FINAL
 # ============================================================
 
 message(STATUS "")
-message(STATUS "YiyoOverlay configurado correctamente.")
-message(STATUS "Arquitectura: ${YIYO_ARCH}")
-message(STATUS "Target: YiyoOverlay")
-message(STATUS "Salida DLL: ${CMAKE_BINARY_DIR}/bin/<config>/YiyoOverlay.dll")
+message(STATUS "========================================")
+message(STATUS " YiyoOverlay configurado correctamente")
+message(STATUS "========================================")
+message(STATUS " Arquitectura : ${YIYO_ARCH}")
+message(STATUS " Target        : YiyoOverlay")
+message(STATUS " DLL           : YiyoOverlay.dll")
+message(STATUS "")
+message(STATUS " IMPORTANTE:")
+message(STATUS " x86 DLL -> juegos x86")
+message(STATUS " x64 DLL -> juegos x64")
+message(STATUS "========================================")
 message(STATUS "")
 ```
+
