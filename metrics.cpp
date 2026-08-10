@@ -6,6 +6,12 @@
 #endif
 
 #include <windows.h>
+
+// Asegurar la definicion de NTSTATUS independientemente del orden de cabeceras de MSVC
+#ifndef NTSTATUS
+typedef LONG NTSTATUS;
+#endif
+
 #include <winternl.h>
 
 #include "metrics.h"
