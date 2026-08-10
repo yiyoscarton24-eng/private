@@ -1,6 +1,8 @@
+```cpp
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
+
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
@@ -11,21 +13,26 @@
 #include <dxgi1_4.h>
 #include <powrprof.h>
 
+#include <atomic>
+#include <thread>
+#include <vector>
+#include <cstdint>
+#include <cwchar>
+
 #include "metrics.h"
 #include "overlay.h"
 #include "logger.h"
 
-#include <thread>
-#include <atomic>
-#include <vector>
-#include <string>
-#include <numeric>
-
 #pragma comment(lib, "pdh.lib")
 #pragma comment(lib, "powrprof.lib")
 
-// Estructura para ProcessorInformation de PowrProf
-typedef struct _PROCESSOR_POWER_INFORMATION {
+// ============================================================
+// PROCESSOR_POWER_INFORMATION
+// Compatible con x86 y x64
+// ============================================================
+
+typedef struct _PROCESSOR_POWER_INFORMATION
+{
     ULONG Number;
     ULONG MaxMhz;
     ULONG CurrentMhz;
@@ -34,44 +41,105 @@ typedef struct _PROCESSOR_POWER_INFORMATION {
     ULONG CurrentIdleState;
 } PROCESSOR_POWER_INFORMATION;
 
+
+// ============================================================
+// ESTADO GLOBAL
+// ============================================================
+
 static std::atomic<bool> g_metricsRunning{ false };
 static std::thread g_metricsThread;
 
 static std::atomic<bool> g_shuttingDown{ false };
 static HANDLE g_wakeEvent = nullptr;
 
-// ---------------------------------------------------------------------
+
+// ============================================================
 // CPU %
-// ---------------------------------------------------------------------
-struct CpuCounter {
+// ============================================================
+
+struct CpuCounter
+{
     PDH_HQUERY query = nullptr;
     PDH_HCOUNTER counter = nullptr;
     bool ok = false;
 
     void Init()
     {
-        PDH_STATUS st = PdhOpenQueryW(nullptr, 0, &query);
-        if (st != ERROR_SUCCESS) { LOG_ERROR("PdhOpenQueryW (CPU) fallo: 0x%08X", st); return; }
+        PDH_STATUS st = PdhOpenQueryW(
+            nullptr,
+            0,
+            &query
+        );
 
-        st = PdhAddEnglishCounterW(query, L"\\Processor(_Total)\\% Processor Time", 0, &counter);
-        if (st != ERROR_SUCCESS) { LOG_ERROR("PdhAddEnglishCounterW (CPU%%) fallo: 0x%08X", st); return; }
+        if (st != ERROR_SUCCESS)
+        {
+            LOG_ERROR(
+                "PdhOpenQueryW (CPU) fallo: 0x%08X",
+                static_cast<unsigned int>(st)
+            );
+            return;
+        }
 
+        st = PdhAddEnglishCounterW(
+            query,
+            L"\\Processor(_Total)\\% Processor Time",
+            0,
+            &counter
+        );
+
+        if (st != ERROR_SUCCESS)
+        {
+            LOG_ERROR(
+                "PdhAddEnglishCounterW (CPU%%) fallo: 0x%08X",
+                static_cast<unsigned int>(st)
+            );
+
+            PdhCloseQuery(query);
+            query = nullptr;
+            return;
+        }
+
+        // Primera lectura necesaria para inicializar PDH.
         PdhCollectQueryData(query);
+
         ok = true;
     }
 
     float Sample()
     {
-        if (!ok) return 0.0f;
-        PdhCollectQueryData(query);
-        PDH_FMT_COUNTERVALUE val{};
-        PDH_STATUS st = PdhGetFormattedCounterValue(counter, PDH_FMT_DOUBLE, nullptr, &val);
+        if (!ok)
+            return 0.0f;
+
+        PDH_STATUS st = PdhCollectQueryData(query);
+
         if (st != ERROR_SUCCESS)
         {
-            LOG_ERROR("PdhGetFormattedCounterValue (CPU%%) fallo: 0x%08X", st);
+            LOG_ERROR(
+                "PdhCollectQueryData (CPU) fallo: 0x%08X",
+                static_cast<unsigned int>(st)
+            );
             return 0.0f;
         }
-        return (float)val.doubleValue;
+
+        PDH_FMT_COUNTERVALUE val{};
+
+        st = PdhGetFormattedCounterValue(
+            counter,
+            PDH_FMT_DOUBLE,
+            nullptr,
+            &val
+        );
+
+        if (st != ERROR_SUCCESS)
+        {
+            LOG_ERROR(
+                "PdhGetFormattedCounterValue (CPU%%) fallo: 0x%08X",
+                static_cast<unsigned int>(st)
+            );
+            return 0.0f;
+        }
+
+        return static_cast<float>(val.doubleValue);
     }
 
     void Shutdown()
@@ -81,108 +149,215 @@ struct CpuCounter {
             PdhCloseQuery(query);
             query = nullptr;
         }
+
         counter = nullptr;
         ok = false;
     }
 };
 
-// Frecuencia actual de CPU
+
+// ============================================================
+// FRECUENCIA ACTUAL DE CPU
+// ============================================================
+
 static float ReadCpuCurrentMHz()
 {
     SYSTEM_INFO sysInfo{};
     GetSystemInfo(&sysInfo);
+
     DWORD numCores = sysInfo.dwNumberOfProcessors;
-    if (numCores == 0) numCores = 1;
+
+    if (numCores == 0)
+        numCores = 1;
 
     std::vector<PROCESSOR_POWER_INFORMATION> info(numCores);
-    
-    // Usamos LONG directamente (que es el tipo real retornado por CallNtPowerInformation)
-    LONG status = CallNtPowerInformation(
-        ProcessorInformation, nullptr, 0,
-        info.data(), (ULONG)(sizeof(PROCESSOR_POWER_INFORMATION) * numCores));
 
-    if (status != 0 /* STATUS_SUCCESS */)
+    const ULONG bufferSize =
+        static_cast<ULONG>(
+            sizeof(PROCESSOR_POWER_INFORMATION) * numCores
+        );
+
+    // CallNtPowerInformation devuelve LONG.
+    // No utilizamos NTSTATUS.
+    LONG status = CallNtPowerInformation(
+        ProcessorInformation,
+        nullptr,
+        0,
+        info.data(),
+        bufferSize
+    );
+
+    if (status != 0)
     {
-        LOG_ERROR("CallNtPowerInformation fallo: 0x%08X", (unsigned)status);
+        LOG_ERROR(
+            "CallNtPowerInformation fallo: 0x%08lX",
+            static_cast<unsigned long>(status)
+        );
+
         return 0.0f;
     }
 
     unsigned long long sum = 0;
-    for (auto& p : info)
-        sum += p.CurrentMhz;
 
-    return (float)sum / (float)numCores;
+    for (const auto& p : info)
+    {
+        sum += static_cast<unsigned long long>(
+            p.CurrentMhz
+        );
+    }
+
+    return static_cast<float>(sum) /
+           static_cast<float>(numCores);
 }
 
-// ---------------------------------------------------------------------
-// GPU % (Motor 3D)
-// ---------------------------------------------------------------------
-struct GpuCounter {
+
+// ============================================================
+// GPU %
+// ============================================================
+
+struct GpuCounter
+{
     PDH_HQUERY query = nullptr;
     std::vector<PDH_HCOUNTER> counters;
     bool ok = false;
 
     void Init()
     {
-        PDH_STATUS st = PdhOpenQueryW(nullptr, 0, &query);
-        if (st != ERROR_SUCCESS) { LOG_ERROR("PdhOpenQueryW (GPU) fallo: 0x%08X", st); return; }
+        PDH_STATUS st = PdhOpenQueryW(
+            nullptr,
+            0,
+            &query
+        );
+
+        if (st != ERROR_SUCCESS)
+        {
+            LOG_ERROR(
+                "PdhOpenQueryW (GPU) fallo: 0x%08X",
+                static_cast<unsigned int>(st)
+            );
+            return;
+        }
 
         DWORD pathListSize = 0;
-        PdhExpandWildCardPathW(nullptr, L"\\GPU Engine(*engtype_3D)\\Utilization Percentage",
-                                nullptr, &pathListSize, 0);
+
+        st = PdhExpandWildCardPathW(
+            nullptr,
+            L"\\GPU Engine(*engtype_3D)\\Utilization Percentage",
+            nullptr,
+            &pathListSize,
+            0
+        );
+
         if (pathListSize == 0)
         {
-            LOG_ERROR("No se encontraron instancias de GPU Engine(*engtype_3D)");
+            LOG_ERROR(
+                "No se encontraron instancias de GPU Engine(*engtype_3D)"
+            );
+
+            PdhCloseQuery(query);
+            query = nullptr;
             return;
         }
 
         std::vector<wchar_t> pathList(pathListSize);
-        st = PdhExpandWildCardPathW(nullptr, L"\\GPU Engine(*engtype_3D)\\Utilization Percentage",
-                                    pathList.data(), &pathListSize, 0);
+
+        st = PdhExpandWildCardPathW(
+            nullptr,
+            L"\\GPU Engine(*engtype_3D)\\Utilization Percentage",
+            pathList.data(),
+            &pathListSize,
+            0
+        );
+
         if (st != ERROR_SUCCESS)
         {
-            LOG_ERROR("PdhExpandWildCardPathW (GPU 3D) fallo: 0x%08X", st);
+            LOG_ERROR(
+                "PdhExpandWildCardPathW (GPU 3D) fallo: 0x%08X",
+                static_cast<unsigned int>(st)
+            );
+
+            PdhCloseQuery(query);
+            query = nullptr;
             return;
         }
 
-        for (wchar_t* p = pathList.data(); *p; p += wcslen(p) + 1)
+        for (wchar_t* p = pathList.data();
+             *p;
+             p += wcslen(p) + 1)
         {
-            PDH_HCOUNTER c;
-            if (PdhAddEnglishCounterW(query, p, 0, &c) == ERROR_SUCCESS)
-                counters.push_back(c);
+            PDH_HCOUNTER counter = nullptr;
+
+            if (PdhAddEnglishCounterW(
+                    query,
+                    p,
+                    0,
+                    &counter) == ERROR_SUCCESS)
+            {
+                counters.push_back(counter);
+            }
         }
 
         if (counters.empty())
         {
-            LOG_ERROR("No se pudo agregar ningun contador GPU Engine(*engtype_3D)");
+            LOG_ERROR(
+                "No se pudo agregar ningun contador GPU Engine(*engtype_3D)"
+            );
+
+            PdhCloseQuery(query);
+            query = nullptr;
             return;
         }
 
         PdhCollectQueryData(query);
+
         ok = true;
-        LOG_INFO("GpuCounter: %zu instancias engtype_3D monitorizadas", counters.size());
+
+        LOG_INFO(
+            "GpuCounter: %zu instancias engtype_3D monitorizadas",
+            counters.size()
+        );
     }
 
     float Sample()
     {
-        if (!ok) return 0.0f;
+        if (!ok)
+            return 0.0f;
+
         PDH_STATUS st = PdhCollectQueryData(query);
+
         if (st != ERROR_SUCCESS)
         {
-            LOG_ERROR("PdhCollectQueryData (GPU) fallo: 0x%08X", st);
+            LOG_ERROR(
+                "PdhCollectQueryData (GPU) fallo: 0x%08X",
+                static_cast<unsigned int>(st)
+            );
+
             return 0.0f;
         }
 
         double total = 0.0;
-        for (auto c : counters)
+
+        for (PDH_HCOUNTER counter : counters)
         {
             PDH_FMT_COUNTERVALUE val{};
-            if (PdhGetFormattedCounterValue(c, PDH_FMT_DOUBLE, nullptr, &val) == ERROR_SUCCESS)
+
+            if (PdhGetFormattedCounterValue(
+                    counter,
+                    PDH_FMT_DOUBLE,
+                    nullptr,
+                    &val) == ERROR_SUCCESS)
+            {
                 total += val.doubleValue;
+            }
         }
 
-        if (total > 100.0) total = 100.0;
-        return (float)total;
+        if (total < 0.0)
+            total = 0.0;
+
+        if (total > 100.0)
+            total = 100.0;
+
+        return static_cast<float>(total);
     }
 
     void Shutdown()
@@ -192,102 +367,235 @@ struct GpuCounter {
             PdhCloseQuery(query);
             query = nullptr;
         }
+
         counters.clear();
         ok = false;
     }
 };
 
-// ---------------------------------------------------------------------
+
+// ============================================================
 // VRAM
-// ---------------------------------------------------------------------
-struct VramCounter {
+// ============================================================
+
+struct VramCounter
+{
     IDXGIFactory4* factory = nullptr;
     IDXGIAdapter3* adapter3 = nullptr;
     bool ok = false;
 
     void Init()
     {
-        HRESULT hr = CreateDXGIFactory1(IID_PPV_ARGS(&factory));
-        if (FAILED(hr)) { LOG_ERROR("CreateDXGIFactory1 fallo: 0x%08X", hr); return; }
+        HRESULT hr = CreateDXGIFactory1(
+            IID_PPV_ARGS(&factory)
+        );
 
-        IDXGIAdapter1* adapter1 = nullptr;
-        hr = factory->EnumAdapters1(0, &adapter1);
-        if (FAILED(hr)) { LOG_ERROR("EnumAdapters1(0) fallo: 0x%08X", hr); return; }
-
-        hr = adapter1->QueryInterface(IID_PPV_ARGS(&adapter3));
-        adapter1->Release();
         if (FAILED(hr))
         {
-            LOG_ERROR("QueryInterface IDXGIAdapter3 fallo: 0x%08X", hr);
+            LOG_ERROR(
+                "CreateDXGIFactory1 fallo: 0x%08X",
+                static_cast<unsigned int>(hr)
+            );
+            return;
+        }
+
+        IDXGIAdapter1* adapter1 = nullptr;
+
+        hr = factory->EnumAdapters1(
+            0,
+            &adapter1
+        );
+
+        if (FAILED(hr))
+        {
+            LOG_ERROR(
+                "EnumAdapters1(0) fallo: 0x%08X",
+                static_cast<unsigned int>(hr)
+            );
+            return;
+        }
+
+        hr = adapter1->QueryInterface(
+            IID_PPV_ARGS(&adapter3)
+        );
+
+        adapter1->Release();
+
+        if (FAILED(hr))
+        {
+            LOG_ERROR(
+                "QueryInterface IDXGIAdapter3 fallo: 0x%08X",
+                static_cast<unsigned int>(hr)
+            );
             return;
         }
 
         ok = true;
     }
 
-    bool Sample(float& usedGB, float& budgetGB)
+    bool Sample(
+        float& usedGB,
+        float& budgetGB
+    )
     {
-        usedGB = budgetGB = 0.0f;
-        if (!ok) return false;
+        usedGB = 0.0f;
+        budgetGB = 0.0f;
+
+        if (!ok)
+            return false;
 
         DXGI_QUERY_VIDEO_MEMORY_INFO info{};
-        HRESULT hr = adapter3->QueryVideoMemoryInfo(0, DXGI_MEMORY_SEGMENT_GROUP_LOCAL, &info);
+
+        HRESULT hr = adapter3->QueryVideoMemoryInfo(
+            0,
+            DXGI_MEMORY_SEGMENT_GROUP_LOCAL,
+            &info
+        );
+
         if (FAILED(hr))
         {
-            LOG_ERROR("QueryVideoMemoryInfo fallo: 0x%08X", hr);
+            LOG_ERROR(
+                "QueryVideoMemoryInfo fallo: 0x%08X",
+                static_cast<unsigned int>(hr)
+            );
+
             return false;
         }
 
-        usedGB = (float)(info.CurrentUsage / (1024.0 * 1024.0 * 1024.0));
-        budgetGB = (float)(info.Budget / (1024.0 * 1024.0 * 1024.0));
+        constexpr double GB =
+            1024.0 * 1024.0 * 1024.0;
+
+        usedGB = static_cast<float>(
+            static_cast<double>(info.CurrentUsage) / GB
+        );
+
+        budgetGB = static_cast<float>(
+            static_cast<double>(info.Budget) / GB
+        );
+
         return true;
     }
 
     void Shutdown()
     {
-        if (adapter3) { adapter3->Release(); adapter3 = nullptr; }
-        if (factory) { factory->Release(); factory = nullptr; }
+        if (adapter3)
+        {
+            adapter3->Release();
+            adapter3 = nullptr;
+        }
+
+        if (factory)
+        {
+            factory->Release();
+            factory = nullptr;
+        }
+
         ok = false;
     }
 };
+
+
+// ============================================================
+// HILO DE MÉTRICAS
+// ============================================================
 
 static void MetricsLoop(int intervalMs)
 {
     CpuCounter cpu;
     cpu.Init();
+
     GpuCounter gpu;
     gpu.Init();
+
     VramCounter vram;
     vram.Init();
 
     MEMORYSTATUSEX memStatus{};
     memStatus.dwLength = sizeof(memStatus);
 
-    while (!g_shuttingDown)
+    while (!g_shuttingDown.load())
     {
+        // -----------------------------
+        // CPU
+        // -----------------------------
+
         g_overlay.cpuPercent = cpu.Sample();
         g_overlay.cpuMHz = ReadCpuCurrentMHz();
 
+
+        // -----------------------------
+        // RAM
+        // -----------------------------
+
         if (GlobalMemoryStatusEx(&memStatus))
         {
-            g_overlay.ramUsedGB = (float)((memStatus.ullTotalPhys - memStatus.ullAvailPhys) / (1024.0 * 1024.0 * 1024.0));
-            g_overlay.ramTotalGB = (float)(memStatus.ullTotalPhys / (1024.0 * 1024.0 * 1024.0));
+            constexpr double GB =
+                1024.0 * 1024.0 * 1024.0;
+
+            g_overlay.ramUsedGB =
+                static_cast<float>(
+                    static_cast<double>(
+                        memStatus.ullTotalPhys -
+                        memStatus.ullAvailPhys
+                    ) / GB
+                );
+
+            g_overlay.ramTotalGB =
+                static_cast<float>(
+                    static_cast<double>(
+                        memStatus.ullTotalPhys
+                    ) / GB
+                );
         }
         else
         {
-            LOG_ERROR("GlobalMemoryStatusEx fallo: %lu", GetLastError());
+            LOG_ERROR(
+                "GlobalMemoryStatusEx fallo: %lu",
+                static_cast<unsigned long>(
+                    GetLastError()
+                )
+            );
         }
+
+
+        // -----------------------------
+        // GPU
+        // -----------------------------
 
         g_overlay.gpuPercent = gpu.Sample();
 
-        float vUsed, vBudget;
+
+        // -----------------------------
+        // VRAM
+        // -----------------------------
+
+        float vUsed = 0.0f;
+        float vBudget = 0.0f;
+
         if (vram.Sample(vUsed, vBudget))
         {
             g_overlay.vramUsedGB = vUsed;
             g_overlay.vramTotalGB = vBudget;
         }
 
-        WaitForSingleObject(g_wakeEvent, (DWORD)intervalMs);
+
+        // -----------------------------
+        // Espera
+        // -----------------------------
+
+        if (g_wakeEvent)
+        {
+            WaitForSingleObject(
+                g_wakeEvent,
+                static_cast<DWORD>(intervalMs)
+            );
+        }
+        else
+        {
+            Sleep(
+                static_cast<DWORD>(intervalMs)
+            );
+        }
     }
 
     cpu.Shutdown();
@@ -295,31 +603,78 @@ static void MetricsLoop(int intervalMs)
     vram.Shutdown();
 }
 
+
+// ============================================================
+// INICIAR HILO
+// ============================================================
+
 void Metrics_StartThread(int intervalMs)
 {
-    if (g_metricsRunning) return;
+    if (g_metricsRunning.load())
+        return;
 
-    g_shuttingDown = false;
+    if (intervalMs < 1)
+        intervalMs = 1;
+
+    g_shuttingDown.store(false);
+
     if (!g_wakeEvent)
-        g_wakeEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+    {
+        g_wakeEvent = CreateEventW(
+            nullptr,
+            FALSE,
+            FALSE,
+            nullptr
+        );
+    }
 
-    g_metricsRunning = true;
-    g_metricsThread = std::thread(MetricsLoop, intervalMs);
-    LOG_INFO("Hilo de metricas iniciado (intervalo=%dms)", intervalMs);
+    if (!g_wakeEvent)
+    {
+        LOG_ERROR(
+            "CreateEventW fallo: %lu",
+            static_cast<unsigned long>(
+                GetLastError()
+            )
+        );
+
+        return;
+    }
+
+    g_metricsRunning.store(true);
+
+    g_metricsThread =
+        std::thread(
+            MetricsLoop,
+            intervalMs
+        );
+
+    LOG_INFO(
+        "Hilo de metricas iniciado (intervalo=%dms)",
+        intervalMs
+    );
 }
+
+
+// ============================================================
+// DETENER HILO
+// ============================================================
 
 void Metrics_StopThread()
 {
-    if (!g_metricsRunning) return;
+    if (!g_metricsRunning.load())
+        return;
 
-    g_shuttingDown = true;
+    g_shuttingDown.store(true);
+
     if (g_wakeEvent)
     {
         SetEvent(g_wakeEvent);
     }
 
     if (g_metricsThread.joinable())
+    {
         g_metricsThread.join();
+    }
 
     if (g_wakeEvent)
     {
@@ -327,6 +682,11 @@ void Metrics_StopThread()
         g_wakeEvent = nullptr;
     }
 
-    g_metricsRunning = false;
-    LOG_INFO("Hilo de metricas detenido");
+    g_metricsRunning.store(false);
+
+    LOG_INFO(
+        "Hilo de metricas detenido"
+    );
 }
+```
+
